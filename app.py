@@ -37,6 +37,11 @@ NUBE = config_nube()
 # En el servidor (Linux) siempre es "nube"; en Windows se puede forzar con modo = "nube" en secrets.
 EN_LINEA = NUBE is not None and (sys.platform != "win32" or NUBE.get("modo") == "nube")
 
+if not EN_LINEA and not db.EXCEL_REAL.exists():
+    st.error("⚙️ La página no está configurada todavía: faltan los **Secrets** de la nube "
+             "(sección `[nube]` con `url` y `token`). En Streamlit Cloud: *Manage app → Settings → Secrets*.")
+    st.stop()
+
 # ---------------------------------------------------------------------------
 # Colores (paleta validada para daltonismo; prioridad usa colores de estado)
 # ---------------------------------------------------------------------------
@@ -67,18 +72,64 @@ def dinero(x):
 
 
 # ---------------------------------------------------------------------------
-# Datos
+# Diseño (funciona con tema claro y oscuro)
 # ---------------------------------------------------------------------------
-st.sidebar.title("🎓 Becas UAMRA")
-pagina = st.sidebar.radio(
-    "Ir a:",
-    ["📝 Registro de alumnos", "📊 Gráficas y estadística", "🏅 Padrón de becas", "🗂️ Base de datos"],
-)
-st.sidebar.divider()
-modo_demo = st.sidebar.toggle(
-    "Modo demostración (datos ficticios)",
-    help="Muestra 80 alumnos inventados para probar las gráficas. No modifica los datos reales.",
-)
+CSS = """
+<style>
+.hero{background:linear-gradient(135deg,#1f3864 0%,#2a78d6 100%);color:#fff;border-radius:18px;
+      padding:28px 32px;margin:0 0 18px}
+.hero-badge{display:inline-block;background:rgba(255,255,255,.16);padding:4px 12px;border-radius:999px;
+            font-size:.78rem;letter-spacing:.02em}
+.hero-titulo{font-size:2.1rem;font-weight:800;line-height:1.15;margin:10px 0 6px;color:#fff}
+.hero-sub{color:#dce6f2;margin:0;font-size:1rem}
+.hero-pasos{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
+.hero-pasos span{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.28);padding:4px 12px;
+                 border-radius:999px;font-size:.85rem;color:#fff}
+.seccion{display:flex;align-items:center;gap:12px;margin:18px 0 4px}
+.seccion .num{background:#2a78d6;color:#fff;width:34px;height:34px;border-radius:50%;display:flex;
+              align-items:center;justify-content:center;font-weight:700;flex:none}
+.seccion .tit{font-weight:700;font-size:1.15rem;line-height:1.2}
+.seccion .sub{opacity:.7;font-size:.86rem}
+[data-testid="stForm"]{border-radius:18px;padding:6px 24px 24px;box-shadow:0 8px 28px rgba(0,0,0,.08)}
+.gracias{border-radius:16px;padding:20px 24px;background:rgba(12,163,12,.12);border:1px solid rgba(12,163,12,.45);
+         margin:0 0 14px}
+.gracias .g-tit{font-size:1.35rem;font-weight:800;margin-bottom:4px}
+.pie{opacity:.6;font-size:.82rem;text-align:center;margin:30px 0 6px}
+[data-testid="stBaseButton-primaryFormSubmit"],[data-testid="stBaseButton-primary"]{
+  background:#2a78d6 !important;border-color:#2a78d6 !important;color:#fff !important;
+  font-weight:700;padding:.6rem 1rem;border-radius:12px}
+[data-testid="stBaseButton-primaryFormSubmit"]:hover,[data-testid="stBaseButton-primary"]:hover{
+  background:#1f3864 !important;border-color:#1f3864 !important}
+@media (max-width:640px){.hero{padding:20px 20px}.hero-titulo{font-size:1.55rem}
+  [data-testid="stForm"]{padding:4px 14px 18px}}
+</style>
+"""
+st.markdown(CSS, unsafe_allow_html=True)
+
+# ---------------------------------------------------------------------------
+# Quién usa la página: el público solo ve el registro; el equipo entra con contraseña.
+# En la laptop (modo Excel) siempre se ve todo.
+# ---------------------------------------------------------------------------
+CLAVE_EQUIPO = (NUBE or {}).get("admin_password")
+ES_EQUIPO = (not EN_LINEA) or not CLAVE_EQUIPO or st.session_state.get("admin_ok", False)
+PAGINAS = ["📝 Registro de alumnos", "📊 Gráficas y estadística", "🏅 Padrón de becas", "🗂️ Base de datos"]
+
+if ES_EQUIPO:
+    st.sidebar.title("🎓 Becas UAMRA")
+    pagina = st.sidebar.radio("Ir a:", PAGINAS)
+    st.sidebar.divider()
+    modo_demo = st.sidebar.toggle(
+        "Modo demostración (datos ficticios)",
+        help="Muestra 80 alumnos inventados para probar las gráficas. No modifica los datos reales.",
+    )
+    if EN_LINEA and CLAVE_EQUIPO and st.sidebar.button("🔒 Cerrar sesión del equipo", width="stretch"):
+        st.session_state["admin_ok"] = False
+        st.rerun()
+else:
+    pagina, modo_demo = PAGINAS[0], False
+    st.markdown("<style>[data-testid='stSidebar'],[data-testid='stSidebarCollapsedControl'],"
+                "[data-testid='stExpandSidebarButton']{display:none !important}</style>",
+                unsafe_allow_html=True)
 
 
 @st.cache_data(ttl=30, show_spinner="Leyendo los datos de la nube…")
@@ -89,7 +140,8 @@ def datos_nube(url, token):
 if EN_LINEA:
     RUTA = None
     params = db.leer_parametros(db.EXCEL_REAL if db.EXCEL_REAL.exists() else db.PLANTILLA)
-    st.sidebar.caption("☁️ Conectado a la base de datos en la nube")
+    if ES_EQUIPO:
+        st.sidebar.caption("☁️ Conectado a la base de datos en la nube")
     if modo_demo:
         crudos = pd.DataFrame(db.alumnos_ficticios(80, params))
     else:
@@ -131,44 +183,70 @@ else:
 # ===========================================================================
 # 1. REGISTRO
 # ===========================================================================
+def seccion(num, titulo, sub=""):
+    st.markdown(f"<div class='seccion'><div class='num'>{num}</div><div><div class='tit'>{titulo}</div>"
+                f"<div class='sub'>{sub}</div></div></div>", unsafe_allow_html=True)
+
+
+def encabezado():
+    st.markdown(
+        "<div class='hero'>"
+        "<span class='hero-badge'>UASLP · Unidad Académica Multidisciplinaria Región Altiplano</span>"
+        "<div class='hero-titulo'>Encuesta socioeconómica estudiantil</div>"
+        "<p class='hero-sub'>Programa de detección de alumnos con necesidad de beca · Ingeniería</p>"
+        "<div class='hero-pasos'><span>① Tus datos</span><span>② Ingresos y gastos</span>"
+        "<span>③ Enviar</span><span>⏱ Menos de 2 minutos</span></div>"
+        "</div>", unsafe_allow_html=True)
+
+
 def pagina_registro():
-    st.title("📝 Formulario de captura estudiantil")
-    destino = "en la **base de datos en línea**" if EN_LINEA else "directamente en la hoja **Base_Datos** del Excel"
-    st.caption(f"Programa de detección de alumnos con necesidad de beca · UASLP · UAMRA · "
-               f"Los datos se guardan {destino}.")
+    encabezado()
+    if not EN_LINEA:
+        st.caption("💻 Modo laptop: los datos se guardan directamente en la hoja **Base_Datos** del Excel.")
     if EN_LINEA and modo_demo:
         st.warning("Está en modo demostración: desactívelo en el menú para poder registrarse.")
 
     if msg := st.session_state.pop("registro_ok", None):
-        st.success(msg)
+        st.markdown(f"<div class='gracias'><div class='g-tit'>✅ ¡Gracias por participar!</div>{msg}</div>",
+                    unsafe_allow_html=True)
         diag = st.session_state.pop("ultimo_diag", None)
         if diag:
-            mostrar_diagnostico(diag)
+            with st.expander("Ver el resumen de tus respuestas", expanded=not EN_LINEA):
+                mostrar_diagnostico(diag)
 
     # El formulario solo se vacía cuando el registro se guardó (con otra "llave"); si hay un error,
     # el alumno conserva lo que escribió.
     with st.form(f"registro_{st.session_state.get('form_n', 0)}"):
+        seccion(1, "Tus datos", "Información académica y lugar de procedencia")
+        # Una fila de columnas por pareja de preguntas: en el celular se apilan en este mismo orden.
+        c1, c2 = st.columns(2)
+        clave = c1.text_input("Clave universitaria (6 dígitos)", max_chars=6, placeholder="Ej. 399809")
+        carrera = c2.selectbox("Carrera", params["carreras"])
+        c1, c2 = st.columns(2)
+        semestre = c1.selectbox("Semestre que cursas", params["semestres"])
+        residencia = c2.radio("Estatus de residencia", params["residencias"], horizontal=True,
+                              help="Local: vives en Matehuala. Foráneo: vienes de otro municipio o rentas.")
+        c1, c2 = st.columns(2)
+        procedencia = c1.selectbox("Municipio de procedencia", list(params["geo"]))
+        fuente = c2.selectbox("Fuente principal de ingresos", list(params["fuente"]))
+
+        seccion(2, "Ingresos y gastos de una semana normal", "Montos aproximados en pesos mexicanos ($ MXN)")
+        c1, c2 = st.columns(2)
+        ingreso = c1.number_input("💵 Ingreso semanal", min_value=0.0, step=50.0, format="%.0f",
+                                  help="Todo el dinero que recibes en la semana (familia, trabajo, beca…).")
+        transp = c2.number_input("🚌 Gasto en transporte", min_value=0.0, step=10.0, format="%.0f")
+        c1, c2 = st.columns(2)
+        alim = c1.number_input("🍽️ Gasto en alimentación", min_value=0.0, step=10.0, format="%.0f")
+        otros = c2.number_input("📚 Otros gastos académicos", min_value=0.0, step=10.0, format="%.0f",
+                                help="Copias, materiales, impresiones, etc.")
+
+        seccion(3, "Confirmar y enviar")
         consentimiento = st.checkbox(
             "Acepto participar de forma voluntaria. Mis respuestas se asocian a mi clave "
             "universitaria, se tratarán de forma confidencial y se usarán solo con fines de "
             "investigación académica."
         )
-        c1, c2 = st.columns(2)
-        with c1:
-            st.subheader("Datos del alumno")
-            clave = st.text_input("Clave universitaria (6 dígitos)", max_chars=6, placeholder="399809")
-            carrera = st.selectbox("Carrera", params["carreras"])
-            semestre = st.selectbox("Semestre", params["semestres"])
-            residencia = st.radio("Estatus de residencia", params["residencias"], horizontal=True)
-            procedencia = st.selectbox("Municipio de procedencia", list(params["geo"]))
-            fuente = st.selectbox("Fuente principal de ingresos", list(params["fuente"]))
-        with c2:
-            st.subheader("Ingresos y gastos semanales ($ MXN)")
-            ingreso = st.number_input("Ingreso semanal", min_value=0.0, step=50.0, format="%.0f")
-            transp = st.number_input("Gasto semanal en transporte", min_value=0.0, step=10.0, format="%.0f")
-            alim = st.number_input("Gasto semanal en alimentación", min_value=0.0, step=10.0, format="%.0f")
-            otros = st.number_input("Otros gastos académicos semanales", min_value=0.0, step=10.0, format="%.0f")
-        enviado = st.form_submit_button("💾 Enviar registro" if EN_LINEA else "💾 Guardar registro en Excel",
+        enviado = st.form_submit_button("📨 Enviar mis respuestas" if EN_LINEA else "💾 Guardar registro en Excel",
                                         type="primary", width="stretch",
                                         disabled=EN_LINEA and modo_demo)
 
@@ -195,7 +273,8 @@ def pagina_registro():
                 st.error(str(e))
                 return
             datos_nube.clear()
-            st.session_state["registro_ok"] = f"✅ ¡Gracias! El registro {r['Clave_Alumno']} se guardó en línea."
+            st.session_state["registro_ok"] = (f"Tu registro con la clave <b>{r['Clave_Alumno']}</b> se guardó "
+                                               "correctamente. Ya puedes cerrar esta página.")
         else:
             try:
                 with st.spinner("Guardando en Excel…"):
@@ -204,18 +283,37 @@ def pagina_registro():
                 for linea in str(e).splitlines():
                     st.error(linea)
                 return
-            st.session_state["registro_ok"] = f"✅ Alumno {r['Clave_Alumno']} guardado en la fila {fila} de Base_Datos."
+            st.session_state["registro_ok"] = f"Alumno <b>{r['Clave_Alumno']}</b> guardado en la fila {fila} de Base_Datos."
         st.session_state["ultimo_diag"] = {**r, **db.diagnosticar(r, params)}
         st.session_state["form_n"] = st.session_state.get("form_n", 0) + 1
         st.rerun()
 
-    st.divider()
-    st.subheader("Monitoreo global de la muestra")
-    kpis(datos)
+    if ES_EQUIPO:
+        st.divider()
+        st.subheader("Monitoreo global de la muestra")
+        kpis(datos)
+    else:
+        acceso_equipo()
+    st.markdown("<div class='pie'>Proyecto de Estadística · Ingeniería Mecánica Administrativa · UAMRA – UASLP"
+                "<br>Tus respuestas son confidenciales y solo se usan con fines académicos.</div>",
+                unsafe_allow_html=True)
+
+
+def acceso_equipo():
+    """Entrada discreta para el equipo: abre Gráficas, Padrón y Base de datos."""
+    st.write("")
+    with st.expander("🔒 Acceso del equipo"):
+        with st.form("login_equipo", border=False):
+            intento = st.text_input("Contraseña del equipo", type="password")
+            if st.form_submit_button("Entrar"):
+                if intento == CLAVE_EQUIPO:
+                    st.session_state["admin_ok"] = True
+                    st.rerun()
+                st.error("Contraseña incorrecta.")
 
 
 def mostrar_diagnostico(d):
-    st.markdown("#### Diagnóstico en tiempo real del alumno")
+    st.markdown("#### Diagnóstico del alumno")
     icono = {"ALTA PRIORIDAD": "🔴", "MEDIA PRIORIDAD": "🟡", "BAJA PRIORIDAD": "🟢"}[d["Nivel_Vulnerabilidad"]]
     c = st.columns(4)
     c[0].metric("Gasto total semanal", dinero(d["Gasto_Total_Semanal"]))
@@ -529,27 +627,6 @@ def pagina_base():
                 st.error(str(e))
 
 
-def acceso_permitido() -> bool:
-    """En línea, las páginas con datos de los alumnos piden la contraseña del equipo."""
-    clave = (NUBE or {}).get("admin_password")
-    if not EN_LINEA or not clave or modo_demo or st.session_state.get("admin_ok"):
-        return True
-    st.title("🔒 Acceso del equipo")
-    st.write("Esta sección muestra datos de los alumnos. Escriba la contraseña del equipo.")
-    intento = st.text_input("Contraseña", type="password")
-    if intento:
-        if intento == clave:
-            st.session_state["admin_ok"] = True
-            st.rerun()
-        st.error("Contraseña incorrecta.")
-    return False
-
-
-paginas = {
-    "📝 Registro de alumnos": pagina_registro,
-    "📊 Gráficas y estadística": pagina_graficas,
-    "🏅 Padrón de becas": pagina_padron,
-    "🗂️ Base de datos": pagina_base,
-}
-if pagina == "📝 Registro de alumnos" or acceso_permitido():
-    paginas[pagina]()
+paginas = dict(zip(PAGINAS, [pagina_registro, pagina_graficas, pagina_padron, pagina_base]))
+# Solo el equipo puede llegar a las otras páginas (el público ni siquiera ve el menú).
+paginas[pagina if ES_EQUIPO else PAGINAS[0]]()

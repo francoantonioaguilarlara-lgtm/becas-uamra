@@ -38,9 +38,17 @@ def leer_config(ruta: Path = SECRETS) -> dict | None:
 
 
 def _pedir(req: urllib.request.Request) -> dict:
+    base = req.full_url.split("?")[0]
+    req.add_header("User-Agent", "Mozilla/5.0 (BecasUAMRA)")
     try:
         with urllib.request.urlopen(req, timeout=40) as resp:
             texto = resp.read().decode("utf-8")
+    except urllib.error.HTTPError as e:
+        donde = urllib.parse.urlparse(e.geturl() or base).netloc
+        pista = (" Revise en Secrets que la url esté completa, entre comillas y sin espacios."
+                 if e.code == 404 else "")
+        raise ErrorNube(f"No se pudo conectar con la nube: HTTP {e.code} desde {donde}. "
+                        f"URL configurada: …{base[-12:]} ({len(base)} caracteres).{pista}") from e
     except Exception as e:
         raise ErrorNube(f"No se pudo conectar con la nube: {e}") from e
     try:

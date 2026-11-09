@@ -361,7 +361,8 @@ def alumnos_ficticios(n: int, p: dict, semilla: int = 7) -> list[dict]:
         local = rnd.random() < 0.45
         alumnos.append({
             "Clave_Alumno": clave,
-            "Carrera": rnd.choices(p["carreras"], weights=[5, 3, 2][: len(p["carreras"])])[0],
+            # La primera carrera (la del proyecto) tiene más peso; el resto, igual.
+            "Carrera": rnd.choices(p["carreras"], weights=[4] + [2] * (len(p["carreras"]) - 1))[0],
             "Semestre": rnd.randint(1, 10),
             "Estatus_Residencia": "Local" if local else "Foráneo",
             "Procedencia": "Matehuala" if local else rnd.choice(foraneos),
